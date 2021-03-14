@@ -1,9 +1,5 @@
 use solana_sdk::{
-    account::Account,
-    feature_set::{
-        bpf_compute_budget_balancing, max_cpi_instruction_size_ipv6_mtu, max_invoke_depth_4,
-        max_program_call_depth_64, pubkey_log_syscall_enabled, FeatureSet,
-    },
+    account::AccountSharedData,
     instruction::{CompiledInstruction, Instruction, InstructionError},
     keyed_account::KeyedAccount,
     message::Message,
@@ -40,7 +36,7 @@ pub trait InvokeContext {
         &mut self,
         message: &Message,
         instruction: &CompiledInstruction,
-        accounts: &[Rc<RefCell<Account>>],
+        accounts: &[Rc<RefCell<AccountSharedData>>],
         caller_pivileges: Option<&[bool]>,
     ) -> Result<(), InstructionError>;
     /// Get the program ID of the currently executing program
@@ -63,7 +59,15 @@ pub trait InvokeContext {
     /// Get the bank's active feature set
     fn is_feature_active(&self, feature_id: &Pubkey) -> bool;
     /// Get an account from a pre-account
-    fn get_account(&self, pubkey: &Pubkey) -> Option<RefCell<Account>>;
+    fn get_account(&self, pubkey: &Pubkey) -> Option<Rc<RefCell<AccountSharedData>>>;
+    /// Update timing
+    fn update_timing(
+        &mut self,
+        serialize_us: u64,
+        create_vm_us: u64,
+        execute_us: u64,
+        deserialize_us: u64,
+    );
 }
 
 /// Convenience macro to log a message with an `Rc<RefCell<dyn Logger>>`
@@ -127,64 +131,25 @@ pub struct BpfComputeBudget {
 }
 impl Default for BpfComputeBudget {
     fn default() -> Self {
-        Self::new(&FeatureSet::all_enabled())
+        Self::new()
     }
 }
 impl BpfComputeBudget {
-    pub fn new(feature_set: &FeatureSet) -> Self {
-        let mut bpf_compute_budget =
-        // Original
+    pub fn new() -> Self {
         BpfComputeBudget {
-            max_units: 100_000,
-            log_units: 0,
-            log_64_units: 0,
-            create_program_address_units: 0,
-            invoke_units: 0,
-            max_invoke_depth: 1,
+            max_units: 200_000,
+            log_units: 100,
+            log_64_units: 100,
+            create_program_address_units: 1500,
+            invoke_units: 1000,
+            max_invoke_depth: 4,
             sha256_base_cost: 85,
             sha256_byte_cost: 1,
-            max_call_depth: 20,
+            max_call_depth: 64,
             stack_frame_size: 4_096,
-            log_pubkey_units: 0,
-            max_cpi_instruction_size: std::usize::MAX,
-        };
-
-        if feature_set.is_active(&bpf_compute_budget_balancing::id()) {
-            bpf_compute_budget = BpfComputeBudget {
-                max_units: 200_000,
-                log_units: 100,
-                log_64_units: 100,
-                create_program_address_units: 1500,
-                invoke_units: 1000,
-                ..bpf_compute_budget
-            };
+            log_pubkey_units: 100,
+            max_cpi_instruction_size: 1280, // IPv6 Min MTU size
         }
-        if feature_set.is_active(&max_invoke_depth_4::id()) {
-            bpf_compute_budget = BpfComputeBudget {
-                max_invoke_depth: 4,
-                ..bpf_compute_budget
-            };
-        }
-
-        if feature_set.is_active(&max_program_call_depth_64::id()) {
-            bpf_compute_budget = BpfComputeBudget {
-                max_call_depth: 64,
-                ..bpf_compute_budget
-            };
-        }
-        if feature_set.is_active(&pubkey_log_syscall_enabled::id()) {
-            bpf_compute_budget = BpfComputeBudget {
-                log_pubkey_units: 100,
-                ..bpf_compute_budget
-            };
-        }
-        if feature_set.is_active(&max_cpi_instruction_size_ipv6_mtu::id()) {
-            bpf_compute_budget = BpfComputeBudget {
-                max_cpi_instruction_size: 1280, // IPv6 Min MTU size
-                ..bpf_compute_budget
-            };
-        }
-        bpf_compute_budget
     }
 }
 
@@ -327,11 +292,11 @@ impl Default for MockInvokeContext {
 }
 impl InvokeContext for MockInvokeContext {
     fn push(&mut self, _key: &Pubkey) -> Result<(), InstructionError> {
-        self.invoke_depth += 1;
+        self.invoke_depth = self.invoke_depth.saturating_add(1);
         Ok(())
     }
     fn pop(&mut self) {
-        self.invoke_depth -= 1;
+        self.invoke_depth = self.invoke_depth.saturating_sub(1);
     }
     fn invoke_depth(&self) -> usize {
         self.invoke_depth
@@ -340,7 +305,7 @@ impl InvokeContext for MockInvokeContext {
         &mut self,
         _message: &Message,
         _instruction: &CompiledInstruction,
-        _accounts: &[Rc<RefCell<Account>>],
+        _accounts: &[Rc<RefCell<AccountSharedData>>],
         _caller_pivileges: Option<&[bool]>,
     ) -> Result<(), InstructionError> {
         Ok(())
@@ -368,7 +333,15 @@ impl InvokeContext for MockInvokeContext {
     fn is_feature_active(&self, _feature_id: &Pubkey) -> bool {
         true
     }
-    fn get_account(&self, _pubkey: &Pubkey) -> Option<RefCell<Account>> {
+    fn get_account(&self, _pubkey: &Pubkey) -> Option<Rc<RefCell<AccountSharedData>>> {
         None
+    }
+    fn update_timing(
+        &mut self,
+        _serialize_us: u64,
+        _create_vm_us: u64,
+        _execute_us: u64,
+        _deserialize_us: u64,
+    ) {
     }
 }

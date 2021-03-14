@@ -532,12 +532,7 @@ mod tests {
 
         // too long input string
         // longest valid encoding
-        let mut too_long: GenericArray<u8, U64> = GenericArray::default();
-        // *sigh*
-        for i in &mut too_long {
-            *i = 255u8;
-        }
-        let mut too_long = bs58::encode(too_long).into_string();
+        let mut too_long = bs58::encode(&[255u8; SIGNATURE_BYTES]).into_string();
         // and one to grow on
         too_long.push('1');
         assert_eq!(

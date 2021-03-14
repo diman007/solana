@@ -11,6 +11,7 @@ node_modules
 
 # Coverage
 coverage
+.nyc_output
 
 # Release
 lib
@@ -27,3 +28,6 @@ doc
 
 # fixtures
 /test/fixtures
+
+# `solana-test-validator` ledger location
+test-ledger/

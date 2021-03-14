@@ -547,9 +547,9 @@ mod tests {
         rpc_subscriptions::tests::robust_poll_or_panic,
     };
     use crossbeam_channel::unbounded;
-    use jsonrpc_core::{futures::sync::mpsc, Response};
+    use jsonrpc_core::{futures::channel::mpsc, Response};
     use jsonrpc_pubsub::{PubSubHandler, Session};
-    use serial_test_derive::serial;
+    use serial_test::serial;
     use solana_account_decoder::{parse_account_data::parse_account_data, UiAccountEncoding};
     use solana_client::rpc_response::{ProcessedSignatureResult, ReceivedSignatureResult};
     use solana_runtime::{
@@ -562,6 +562,7 @@ mod tests {
         },
     };
     use solana_sdk::{
+        account::ReadableAccount,
         commitment_config::CommitmentConfig,
         hash::Hash,
         message::Message,
@@ -602,7 +603,7 @@ mod tests {
     }
 
     fn create_session() -> Arc<Session> {
-        Arc::new(Session::new(mpsc::channel(1).0))
+        Arc::new(Session::new(mpsc::unbounded().0))
     }
 
     #[test]
@@ -837,14 +838,14 @@ mod tests {
         sleep(Duration::from_millis(200));
 
         // Test signature confirmation notification #1
-        let expected_data = bank_forks
+        let account = bank_forks
             .read()
             .unwrap()
             .get(1)
             .unwrap()
             .get_account(&stake_account.pubkey())
-            .unwrap()
-            .data;
+            .unwrap();
+        let expected_data = account.data();
         let expected = json!({
            "jsonrpc": "2.0",
            "method": "accountNotification",
@@ -942,18 +943,18 @@ mod tests {
         sleep(Duration::from_millis(200));
 
         // Test signature confirmation notification #1
-        let expected_data = bank_forks
+        let account = bank_forks
             .read()
             .unwrap()
             .get(1)
             .unwrap()
             .get_account(&nonce_account.pubkey())
-            .unwrap()
-            .data;
+            .unwrap();
+        let expected_data = account.data();
         let expected_data = parse_account_data(
             &nonce_account.pubkey(),
             &system_program::id(),
-            &expected_data,
+            expected_data,
             None,
         )
         .unwrap();

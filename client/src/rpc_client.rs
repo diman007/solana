@@ -22,10 +22,7 @@ use solana_account_decoder::{
 };
 use solana_sdk::{
     account::Account,
-    clock::{
-        Slot, UnixTimestamp, DEFAULT_TICKS_PER_SECOND, DEFAULT_TICKS_PER_SLOT,
-        MAX_HASH_AGE_IN_SECONDS,
-    },
+    clock::{Slot, UnixTimestamp, DEFAULT_MS_PER_SLOT, MAX_HASH_AGE_IN_SECONDS},
     commitment_config::{CommitmentConfig, CommitmentLevel},
     epoch_info::EpochInfo,
     epoch_schedule::EpochSchedule,
@@ -124,6 +121,13 @@ impl RpcClient {
 
     pub fn new_socket(addr: SocketAddr) -> Self {
         Self::new(get_rpc_request_str(addr, false))
+    }
+
+    pub fn new_socket_with_commitment(
+        addr: SocketAddr,
+        commitment_config: CommitmentConfig,
+    ) -> Self {
+        Self::new_with_commitment(get_rpc_request_str(addr, false), commitment_config)
     }
 
     pub fn new_socket_with_timeout(addr: SocketAddr, timeout: Duration) -> Self {
@@ -999,9 +1003,7 @@ impl RpcClient {
             debug!("Got same blockhash ({:?}), will retry...", blockhash);
 
             // Retry ~twice during a slot
-            sleep(Duration::from_millis(
-                500 * DEFAULT_TICKS_PER_SLOT / DEFAULT_TICKS_PER_SECOND,
-            ));
+            sleep(Duration::from_millis(DEFAULT_MS_PER_SLOT / 2));
             num_retries += 1;
         }
         Err(RpcError::ForUser(format!(
@@ -1503,10 +1505,6 @@ impl RpcClient {
         }
     }
 
-    pub fn validator_exit(&self) -> ClientResult<bool> {
-        self.send(RpcRequest::ValidatorExit, Value::Null)
-    }
-
     pub fn send<T>(&self, request: RpcRequest, params: Value) -> ClientResult<T>
     where
         T: serde::de::DeserializeOwned,
@@ -1574,7 +1572,7 @@ mod tests {
     use super::*;
     use crate::{client_error::ClientErrorKind, mock_sender::PUBKEY};
     use assert_matches::assert_matches;
-    use jsonrpc_core::{Error, IoHandler, Params};
+    use jsonrpc_core::{futures::prelude::*, Error, IoHandler, Params};
     use jsonrpc_http_server::{AccessControlAllowOrigin, DomainsValidation, ServerBuilder};
     use serde_json::Number;
     use solana_sdk::{
@@ -1591,14 +1589,14 @@ mod tests {
             let mut io = IoHandler::default();
             // Successful request
             io.add_method("getBalance", |_params: Params| {
-                Ok(Value::Number(Number::from(50)))
+                future::ok(Value::Number(Number::from(50)))
             });
             // Failed request
             io.add_method("getRecentBlockhash", |params: Params| {
                 if params != Params::None {
-                    Err(Error::invalid_request())
+                    future::err(Error::invalid_request())
                 } else {
-                    Ok(Value::String(
+                    future::ok(Value::String(
                         "deadbeefXjn8o3yroDHxUtKsZZgoy4GPkPPXfouKNHhx".to_string(),
                     ))
                 }

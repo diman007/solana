@@ -3,13 +3,14 @@ module.exports = {
     browser: true,
     es6: true,
     node: true,
+    mocha: true,
   },
   extends: [
     'eslint:recommended',
     'plugin:import/errors',
     'plugin:import/warnings',
   ],
-  parser: 'babel-eslint',
+  parser: 'babel-eslint', // upgrade to @babel/eslint-parser blocked on eslint-plugin-flowtype
   parserOptions: {
     sourceType: 'module',
     ecmaVersion: 8,

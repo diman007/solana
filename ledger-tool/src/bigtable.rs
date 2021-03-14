@@ -221,7 +221,8 @@ impl BigTableSubCommand for App<'_, '_> {
         self.subcommand(
             SubCommand::with_name("bigtable")
                 .about("Ledger data on a BigTable instance")
-                .setting(AppSettings::ArgRequiredElseHelp)
+                .setting(AppSettings::InferSubcommands)
+                .setting(AppSettings::SubcommandRequiredElseHelp)
                 .subcommand(
                     SubCommand::with_name("upload")
                         .about("Upload the ledger to BigTable")
@@ -381,7 +382,7 @@ impl BigTableSubCommand for App<'_, '_> {
 }
 
 pub fn bigtable_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) {
-    let mut runtime = tokio::runtime::Runtime::new().unwrap();
+    let runtime = tokio::runtime::Runtime::new().unwrap();
 
     let verbose = matches.is_present("verbose");
     let output_format = matches

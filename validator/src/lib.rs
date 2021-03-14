@@ -1,9 +1,14 @@
 #![allow(clippy::integer_arithmetic)]
 pub use solana_core::test_validator;
 use {
+    console::style,
+    indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle},
     log::*,
     std::{env, process::exit, thread::JoinHandle},
 };
+
+pub mod admin_rpc_service;
+pub mod dashboard;
 
 #[cfg(unix)]
 fn redirect_stderr(filename: &str) {
@@ -60,14 +65,7 @@ pub fn redirect_stderr_to_file(logfile: Option<String>) -> Option<JoinHandle<()>
         }
     };
 
-    solana_logger::setup_with_default(
-        &[
-            "solana=info,solana_runtime::message_processor=error", /* info logging for all solana modules */
-            "rpc=trace",   /* json_rpc request/response logging */
-        ]
-        .join(","),
-    );
-
+    solana_logger::setup_with_default("solana=info");
     logger_thread
 }
 
@@ -75,4 +73,19 @@ pub fn port_validator(port: String) -> Result<(), String> {
     port.parse::<u16>()
         .map(|_| ())
         .map_err(|e| format!("{:?}", e))
+}
+
+/// Creates a new process bar for processing that will take an unknown amount of time
+pub fn new_spinner_progress_bar() -> ProgressBar {
+    let progress_bar = ProgressBar::new(42);
+    progress_bar.set_draw_target(ProgressDrawTarget::stdout());
+    progress_bar
+        .set_style(ProgressStyle::default_spinner().template("{spinner:.green} {wide_msg}"));
+    progress_bar.enable_steady_tick(100);
+    progress_bar
+}
+
+/// Pretty print a "name value"
+pub fn println_name_value(name: &str, value: &str) {
+    println!("{} {}", style(name).bold(), value);
 }

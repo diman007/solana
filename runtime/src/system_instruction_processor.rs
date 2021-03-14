@@ -1,6 +1,6 @@
 use log::*;
 use solana_sdk::{
-    account::Account,
+    account::{AccountSharedData, ReadableAccount},
     account_utils::StateMut,
     ic_msg,
     instruction::InstructionError,
@@ -62,7 +62,7 @@ impl Address {
 }
 
 fn allocate(
-    account: &mut Account,
+    account: &mut AccountSharedData,
     address: &Address,
     space: u64,
     signers: &HashSet<Pubkey>,
@@ -79,7 +79,7 @@ fn allocate(
 
     // if it looks like the `to` account is already in use, bail
     //   (note that the id check is also enforced by message_processor)
-    if !account.data.is_empty() || !system_program::check_id(&account.owner) {
+    if !account.data().is_empty() || !system_program::check_id(&account.owner) {
         ic_msg!(
             invoke_context,
             "Allocate: account {:?} already in use",
@@ -98,13 +98,13 @@ fn allocate(
         return Err(SystemError::InvalidAccountDataLength.into());
     }
 
-    account.data = vec![0; space as usize];
+    account.set_data(vec![0; space as usize]);
 
     Ok(())
 }
 
 fn assign(
-    account: &mut Account,
+    account: &mut AccountSharedData,
     address: &Address,
     owner: &Pubkey,
     signers: &HashSet<Pubkey>,
@@ -131,7 +131,7 @@ fn assign(
 }
 
 fn allocate_and_assign(
-    to: &mut Account,
+    to: &mut AccountSharedData,
     to_address: &Address,
     space: u64,
     owner: &Pubkey,
@@ -207,7 +207,7 @@ fn transfer(
     if from.signer_key().is_none() {
         ic_msg!(
             invoke_context,
-            "Transfer: `from` accont {} must sign",
+            "Transfer: `from` account {} must sign",
             from.unsigned_key()
         );
         return Err(InstructionError::MissingRequiredSignature);
@@ -421,11 +421,11 @@ pub enum SystemAccountKind {
     Nonce,
 }
 
-pub fn get_system_account_kind(account: &Account) -> Option<SystemAccountKind> {
+pub fn get_system_account_kind(account: &AccountSharedData) -> Option<SystemAccountKind> {
     if system_program::check_id(&account.owner) {
-        if account.data.is_empty() {
+        if account.data().is_empty() {
             Some(SystemAccountKind::System)
-        } else if account.data.len() == nonce::State::size() {
+        } else if account.data().len() == nonce::State::size() {
             match account.state().ok()? {
                 nonce::state::Versions::Current(state) => match *state {
                     nonce::State::Initialized(_) => Some(SystemAccountKind::Nonce),
@@ -446,7 +446,7 @@ mod tests {
     use crate::{bank::Bank, bank_client::BankClient};
     use bincode::serialize;
     use solana_sdk::{
-        account::{self, Account},
+        account::{self, Account, AccountSharedData},
         client::SyncClient,
         fee_calculator::FeeCalculator,
         genesis_config::create_genesis_config,
@@ -486,10 +486,10 @@ mod tests {
         )
     }
 
-    fn create_default_account() -> RefCell<Account> {
-        RefCell::new(Account::default())
+    fn create_default_account() -> RefCell<AccountSharedData> {
+        RefCell::new(AccountSharedData::default())
     }
-    fn create_default_recent_blockhashes_account() -> RefCell<Account> {
+    fn create_default_recent_blockhashes_account() -> RefCell<AccountSharedData> {
         RefCell::new(recent_blockhashes_account::create_account_with_data(
             1,
             vec![
@@ -499,8 +499,8 @@ mod tests {
             .into_iter(),
         ))
     }
-    fn create_default_rent_account() -> RefCell<Account> {
-        RefCell::new(account::create_account(&Rent::free(), 1))
+    fn create_default_rent_account() -> RefCell<AccountSharedData> {
+        RefCell::new(account::create_account_shared_data(&Rent::free(), 1))
     }
 
     #[test]
@@ -508,8 +508,8 @@ mod tests {
         let new_owner = Pubkey::new(&[9; 32]);
         let from = solana_sdk::pubkey::new_rand();
         let to = solana_sdk::pubkey::new_rand();
-        let from_account = Account::new_ref(100, 0, &system_program::id());
-        let to_account = Account::new_ref(0, 0, &Pubkey::default());
+        let from_account = AccountSharedData::new_ref(100, 0, &system_program::id());
+        let to_account = AccountSharedData::new_ref(0, 0, &Pubkey::default());
 
         assert_eq!(
             process_instruction(
@@ -530,7 +530,7 @@ mod tests {
         assert_eq!(from_account.borrow().lamports, 50);
         assert_eq!(to_account.borrow().lamports, 50);
         assert_eq!(to_account.borrow().owner, new_owner);
-        assert_eq!(to_account.borrow().data, [0, 0]);
+        assert_eq!(to_account.borrow().data(), &[0, 0]);
     }
 
     #[test]
@@ -540,8 +540,8 @@ mod tests {
         let seed = "shiny pepper";
         let to = Pubkey::create_with_seed(&from, seed, &new_owner).unwrap();
 
-        let from_account = Account::new_ref(100, 0, &system_program::id());
-        let to_account = Account::new_ref(0, 0, &Pubkey::default());
+        let from_account = AccountSharedData::new_ref(100, 0, &system_program::id());
+        let to_account = AccountSharedData::new_ref(0, 0, &Pubkey::default());
 
         assert_eq!(
             process_instruction(
@@ -564,7 +564,7 @@ mod tests {
         assert_eq!(from_account.borrow().lamports, 50);
         assert_eq!(to_account.borrow().lamports, 50);
         assert_eq!(to_account.borrow().owner, new_owner);
-        assert_eq!(to_account.borrow().data, [0, 0]);
+        assert_eq!(to_account.borrow().data(), &[0, 0]);
     }
 
     #[test]
@@ -575,9 +575,9 @@ mod tests {
         let seed = "shiny pepper";
         let to = Pubkey::create_with_seed(&base, seed, &new_owner).unwrap();
 
-        let from_account = Account::new_ref(100, 0, &system_program::id());
-        let to_account = Account::new_ref(0, 0, &Pubkey::default());
-        let base_account = Account::new_ref(0, 0, &Pubkey::default());
+        let from_account = AccountSharedData::new_ref(100, 0, &system_program::id());
+        let to_account = AccountSharedData::new_ref(0, 0, &Pubkey::default());
+        let base_account = AccountSharedData::new_ref(0, 0, &Pubkey::default());
 
         assert_eq!(
             process_instruction(
@@ -601,7 +601,7 @@ mod tests {
         assert_eq!(from_account.borrow().lamports, 50);
         assert_eq!(to_account.borrow().lamports, 50);
         assert_eq!(to_account.borrow().owner, new_owner);
-        assert_eq!(to_account.borrow().data, [0, 0]);
+        assert_eq!(to_account.borrow().data(), &[0, 0]);
     }
 
     #[test]
@@ -628,8 +628,8 @@ mod tests {
         let seed = "dull boy";
         let to = Pubkey::create_with_seed(&from, seed, &new_owner).unwrap();
 
-        let from_account = Account::new_ref(100, 0, &system_program::id());
-        let to_account = Account::new_ref(0, 0, &Pubkey::default());
+        let from_account = AccountSharedData::new_ref(100, 0, &system_program::id());
+        let to_account = AccountSharedData::new_ref(0, 0, &Pubkey::default());
         let to_address = Address::create(
             &to,
             Some((&from, seed, &new_owner)),
@@ -651,18 +651,18 @@ mod tests {
             Err(InstructionError::MissingRequiredSignature)
         );
         assert_eq!(from_account.borrow().lamports, 100);
-        assert_eq!(*to_account.borrow(), Account::default());
+        assert_eq!(*to_account.borrow(), AccountSharedData::default());
     }
 
     #[test]
     fn test_create_with_zero_lamports() {
-        // create account with zero lamports tranferred
+        // create account with zero lamports transferred
         let new_owner = Pubkey::new(&[9; 32]);
         let from = solana_sdk::pubkey::new_rand();
-        let from_account = Account::new_ref(100, 1, &solana_sdk::pubkey::new_rand()); // not from system account
+        let from_account = AccountSharedData::new_ref(100, 1, &solana_sdk::pubkey::new_rand()); // not from system account
 
         let to = solana_sdk::pubkey::new_rand();
-        let to_account = Account::new_ref(0, 0, &Pubkey::default());
+        let to_account = AccountSharedData::new_ref(0, 0, &Pubkey::default());
 
         assert_eq!(
             create_account(
@@ -681,11 +681,10 @@ mod tests {
         let from_lamports = from_account.borrow().lamports;
         let to_lamports = to_account.borrow().lamports;
         let to_owner = to_account.borrow().owner;
-        let to_data = &to_account.borrow().data;
         assert_eq!(from_lamports, 100);
         assert_eq!(to_lamports, 0);
         assert_eq!(to_owner, new_owner);
-        assert_eq!(*to_data, [0, 0]);
+        assert_eq!(to_account.borrow().data(), &[0, 0]);
     }
 
     #[test]
@@ -693,10 +692,10 @@ mod tests {
         // Attempt to create account with more lamports than remaining in from_account
         let new_owner = Pubkey::new(&[9; 32]);
         let from = solana_sdk::pubkey::new_rand();
-        let from_account = Account::new_ref(100, 0, &system_program::id());
+        let from_account = AccountSharedData::new_ref(100, 0, &system_program::id());
 
         let to = solana_sdk::pubkey::new_rand();
-        let to_account = Account::new_ref(0, 0, &Pubkey::default());
+        let to_account = AccountSharedData::new_ref(0, 0, &Pubkey::default());
 
         let result = create_account(
             &KeyedAccount::new(&from, true, &from_account),
@@ -713,9 +712,9 @@ mod tests {
 
     #[test]
     fn test_request_more_than_allowed_data_length() {
-        let from_account = Account::new_ref(100, 0, &system_program::id());
+        let from_account = AccountSharedData::new_ref(100, 0, &system_program::id());
         let from = solana_sdk::pubkey::new_rand();
-        let to_account = Account::new_ref(0, 0, &system_program::id());
+        let to_account = AccountSharedData::new_ref(0, 0, &system_program::id());
         let to = solana_sdk::pubkey::new_rand();
 
         let signers = &[from, to].iter().cloned().collect::<HashSet<_>>();
@@ -752,7 +751,7 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(to_account.borrow().lamports, 50);
         assert_eq!(
-            to_account.borrow().data.len() as u64,
+            to_account.borrow().data().len() as u64,
             MAX_PERMITTED_DATA_LENGTH
         );
     }
@@ -762,11 +761,11 @@ mod tests {
         // Attempt to create system account in account already owned by another program
         let new_owner = Pubkey::new(&[9; 32]);
         let from = solana_sdk::pubkey::new_rand();
-        let from_account = Account::new_ref(100, 0, &system_program::id());
+        let from_account = AccountSharedData::new_ref(100, 0, &system_program::id());
 
         let original_program_owner = Pubkey::new(&[5; 32]);
         let owned_key = solana_sdk::pubkey::new_rand();
-        let owned_account = Account::new_ref(0, 0, &original_program_owner);
+        let owned_account = AccountSharedData::new_ref(0, 0, &original_program_owner);
         let unchanged_account = owned_account.clone();
 
         let signers = &[from, owned_key].iter().cloned().collect::<HashSet<_>>();
@@ -789,7 +788,7 @@ mod tests {
         assert_eq!(owned_account, unchanged_account);
 
         // Attempt to create system account in account that already has data
-        let owned_account = Account::new_ref(0, 1, &Pubkey::default());
+        let owned_account = AccountSharedData::new_ref(0, 1, &Pubkey::default());
         let unchanged_account = owned_account.borrow().clone();
         let result = create_account(
             &KeyedAccount::new(&from, true, &from_account),
@@ -807,7 +806,7 @@ mod tests {
         assert_eq!(*owned_account.borrow(), unchanged_account);
 
         // Attempt to create an account that already has lamports
-        let owned_account = Account::new_ref(1, 0, &Pubkey::default());
+        let owned_account = AccountSharedData::new_ref(1, 0, &Pubkey::default());
         let unchanged_account = owned_account.borrow().clone();
         let result = create_account(
             &KeyedAccount::new(&from, true, &from_account),
@@ -829,10 +828,10 @@ mod tests {
         // Attempt to create an account without signing the transfer
         let new_owner = Pubkey::new(&[9; 32]);
         let from = solana_sdk::pubkey::new_rand();
-        let from_account = Account::new_ref(100, 0, &system_program::id());
+        let from_account = AccountSharedData::new_ref(100, 0, &system_program::id());
 
         let owned_key = solana_sdk::pubkey::new_rand();
-        let owned_account = Account::new_ref(0, 0, &Pubkey::default());
+        let owned_account = AccountSharedData::new_ref(0, 0, &Pubkey::default());
 
         let owned_address = owned_key.into();
 
@@ -850,7 +849,7 @@ mod tests {
         assert_eq!(result, Err(InstructionError::MissingRequiredSignature));
 
         // Haven't signed to account
-        let owned_account = Account::new_ref(0, 0, &Pubkey::default());
+        let owned_account = AccountSharedData::new_ref(0, 0, &Pubkey::default());
         let result = create_account(
             &KeyedAccount::new(&from, true, &from_account),
             &KeyedAccount::new(&owned_key, true, &owned_account),
@@ -864,7 +863,7 @@ mod tests {
         assert_eq!(result, Err(InstructionError::MissingRequiredSignature));
 
         // support creation/assignment with zero lamports (ephemeral account)
-        let owned_account = Account::new_ref(0, 0, &Pubkey::default());
+        let owned_account = AccountSharedData::new_ref(0, 0, &Pubkey::default());
         let result = create_account(
             &KeyedAccount::new(&from, false, &from_account),
             &KeyedAccount::new(&owned_key, false, &owned_account),
@@ -882,10 +881,10 @@ mod tests {
     fn test_create_sysvar_invalid_id() {
         // Attempt to create system account in account already owned by another program
         let from = solana_sdk::pubkey::new_rand();
-        let from_account = Account::new_ref(100, 0, &system_program::id());
+        let from_account = AccountSharedData::new_ref(100, 0, &system_program::id());
 
         let to = solana_sdk::pubkey::new_rand();
-        let to_account = Account::new_ref(0, 0, &system_program::id());
+        let to_account = AccountSharedData::new_ref(0, 0, &system_program::id());
 
         let signers = [from, to].iter().cloned().collect::<HashSet<_>>();
         let to_address = to.into();
@@ -910,13 +909,13 @@ mod tests {
         // Attempt to create system account in account with populated data
         let new_owner = Pubkey::new(&[9; 32]);
         let from = solana_sdk::pubkey::new_rand();
-        let from_account = Account::new_ref(100, 0, &system_program::id());
+        let from_account = AccountSharedData::new_ref(100, 0, &system_program::id());
 
         let populated_key = solana_sdk::pubkey::new_rand();
-        let populated_account = Account {
+        let populated_account = AccountSharedData::from(Account {
             data: vec![0, 1, 2, 3],
             ..Account::default()
-        }
+        })
         .into();
 
         let signers = [from, populated_key]
@@ -941,7 +940,7 @@ mod tests {
     #[test]
     fn test_create_from_account_is_nonce_fail() {
         let nonce = solana_sdk::pubkey::new_rand();
-        let nonce_account = Account::new_ref_data(
+        let nonce_account = AccountSharedData::new_ref_data(
             42,
             &nonce::state::Versions::new_current(nonce::State::Initialized(
                 nonce::state::Data::default(),
@@ -952,7 +951,7 @@ mod tests {
         let from = KeyedAccount::new(&nonce, true, &nonce_account);
         let new = solana_sdk::pubkey::new_rand();
 
-        let new_account = Account::new_ref(0, 0, &system_program::id());
+        let new_account = AccountSharedData::new_ref(0, 0, &system_program::id());
 
         let signers = [nonce, new].iter().cloned().collect::<HashSet<_>>();
         let new_address = new.into();
@@ -978,7 +977,7 @@ mod tests {
         let new_owner = Pubkey::new(&[9; 32]);
 
         let pubkey = solana_sdk::pubkey::new_rand();
-        let mut account = Account::new(100, 0, &system_program::id());
+        let mut account = AccountSharedData::new(100, 0, &system_program::id());
 
         assert_eq!(
             assign(
@@ -1018,7 +1017,7 @@ mod tests {
         let new_owner = sysvar::id();
 
         let from = solana_sdk::pubkey::new_rand();
-        let mut from_account = Account::new(100, 0, &system_program::id());
+        let mut from_account = AccountSharedData::new(100, 0, &system_program::id());
 
         assert_eq!(
             assign(
@@ -1043,7 +1042,7 @@ mod tests {
         assert_eq!(result, Err(InstructionError::NotEnoughAccountKeys));
 
         let from = solana_sdk::pubkey::new_rand();
-        let from_account = Account::new_ref(100, 0, &system_program::id());
+        let from_account = AccountSharedData::new_ref(100, 0, &system_program::id());
         // Attempt to transfer with no destination
         let instruction = SystemInstruction::Transfer { lamports: 0 };
         let data = serialize(&instruction).unwrap();
@@ -1058,9 +1057,9 @@ mod tests {
     #[test]
     fn test_transfer_lamports() {
         let from = solana_sdk::pubkey::new_rand();
-        let from_account = Account::new_ref(100, 0, &Pubkey::new(&[2; 32])); // account owner should not matter
+        let from_account = AccountSharedData::new_ref(100, 0, &Pubkey::new(&[2; 32])); // account owner should not matter
         let to = Pubkey::new(&[3; 32]);
-        let to_account = Account::new_ref(1, 0, &to); // account owner should not matter
+        let to_account = AccountSharedData::new_ref(1, 0, &to); // account owner should not matter
         let from_keyed_account = KeyedAccount::new(&from, true, &from_account);
         let to_keyed_account = KeyedAccount::new(&to, false, &to_account);
         transfer(
@@ -1104,14 +1103,14 @@ mod tests {
     #[test]
     fn test_transfer_with_seed() {
         let base = solana_sdk::pubkey::new_rand();
-        let base_account = Account::new_ref(100, 0, &Pubkey::new(&[2; 32])); // account owner should not matter
+        let base_account = AccountSharedData::new_ref(100, 0, &Pubkey::new(&[2; 32])); // account owner should not matter
         let from_base_keyed_account = KeyedAccount::new(&base, true, &base_account);
         let from_seed = "42";
         let from_owner = system_program::id();
         let from = Pubkey::create_with_seed(&base, from_seed, &from_owner).unwrap();
-        let from_account = Account::new_ref(100, 0, &Pubkey::new(&[2; 32])); // account owner should not matter
+        let from_account = AccountSharedData::new_ref(100, 0, &Pubkey::new(&[2; 32])); // account owner should not matter
         let to = Pubkey::new(&[3; 32]);
-        let to_account = Account::new_ref(1, 0, &to); // account owner should not matter
+        let to_account = AccountSharedData::new_ref(1, 0, &to); // account owner should not matter
         let from_keyed_account = KeyedAccount::new(&from, true, &from_account);
         let to_keyed_account = KeyedAccount::new(&to, false, &to_account);
         transfer_with_seed(
@@ -1163,7 +1162,7 @@ mod tests {
     #[test]
     fn test_transfer_lamports_from_nonce_account_fail() {
         let from = solana_sdk::pubkey::new_rand();
-        let from_account = Account::new_ref_data(
+        let from_account = AccountSharedData::new_ref_data(
             100,
             &nonce::state::Versions::new_current(nonce::State::Initialized(nonce::state::Data {
                 authority: from,
@@ -1178,7 +1177,7 @@ mod tests {
         );
 
         let to = Pubkey::new(&[3; 32]);
-        let to_account = Account::new_ref(1, 0, &to); // account owner should not matter
+        let to_account = AccountSharedData::new_ref(1, 0, &to); // account owner should not matter
         assert_eq!(
             transfer(
                 &KeyedAccount::new(&from, true, &from_account),
@@ -1353,7 +1352,7 @@ mod tests {
             AccountMeta::new(alice_pubkey, false),
             AccountMeta::new(mallory_pubkey, true),
         ];
-        let malicious_instruction = Instruction::new(
+        let malicious_instruction = Instruction::new_with_bincode(
             system_program::id(),
             &SystemInstruction::Transfer { lamports: 10 },
             account_metas,
@@ -1377,9 +1376,9 @@ mod tests {
                 RefCell::new(if sysvar::recent_blockhashes::check_id(&meta.pubkey) {
                     create_default_recent_blockhashes_account().into_inner()
                 } else if sysvar::rent::check_id(&meta.pubkey) {
-                    account::create_account(&Rent::free(), 1)
+                    account::create_account_shared_data(&Rent::free(), 1)
                 } else {
-                    Account::default()
+                    AccountSharedData::default()
                 })
             })
             .collect();
@@ -1752,7 +1751,7 @@ mod tests {
 
     #[test]
     fn test_get_system_account_kind_system_ok() {
-        let system_account = Account::default();
+        let system_account = AccountSharedData::default();
         assert_eq!(
             get_system_account_kind(&system_account),
             Some(SystemAccountKind::System)
@@ -1761,7 +1760,7 @@ mod tests {
 
     #[test]
     fn test_get_system_account_kind_nonce_ok() {
-        let nonce_account = Account::new_data(
+        let nonce_account = AccountSharedData::new_data(
             42,
             &nonce::state::Versions::new_current(nonce::State::Initialized(
                 nonce::state::Data::default(),
@@ -1785,13 +1784,14 @@ mod tests {
 
     #[test]
     fn test_get_system_account_kind_system_owner_nonzero_nonnonce_data_fail() {
-        let other_data_account = Account::new_data(42, b"other", &Pubkey::default()).unwrap();
+        let other_data_account =
+            AccountSharedData::new_data(42, b"other", &Pubkey::default()).unwrap();
         assert_eq!(get_system_account_kind(&other_data_account), None);
     }
 
     #[test]
     fn test_get_system_account_kind_nonsystem_owner_with_nonce_data_fail() {
-        let nonce_account = Account::new_data(
+        let nonce_account = AccountSharedData::new_data(
             42,
             &nonce::state::Versions::new_current(nonce::State::Initialized(
                 nonce::state::Data::default(),

@@ -1,7 +1,7 @@
 #![allow(clippy::integer_arithmetic)]
 use clap::{
-    crate_description, crate_name, value_t, value_t_or_exit, values_t_or_exit, App, Arg,
-    ArgMatches, SubCommand,
+    crate_description, crate_name, value_t, value_t_or_exit, values_t_or_exit, App, AppSettings,
+    Arg, ArgMatches, SubCommand,
 };
 use itertools::Itertools;
 use log::*;
@@ -31,7 +31,7 @@ use solana_runtime::{
     snapshot_utils::SnapshotVersion,
 };
 use solana_sdk::{
-    account::Account,
+    account::{AccountSharedData, ReadableAccount},
     clock::{Epoch, Slot},
     feature::{self, Feature},
     feature_set,
@@ -746,10 +746,10 @@ fn main() {
         .long("no-snapshot")
         .takes_value(false)
         .help("Do not start from a local snapshot if present");
-    let bpf_jit_arg = Arg::with_name("bpf_jit")
-        .long("bpf-jit")
+    let no_bpf_jit_arg = Arg::with_name("no_bpf_jit")
+        .long("no-bpf-jit")
         .takes_value(false)
-        .help("Process with JIT instead of interpreter");
+        .help("Disable the just-in-time compiler and instead use the interpreter for BP");
     let no_accounts_db_caching_arg = Arg::with_name("no_accounts_db_caching")
         .long("no-accounts-db-caching")
         .takes_value(false)
@@ -811,6 +811,9 @@ fn main() {
     let matches = App::new(crate_name!())
         .about(crate_description!())
         .version(solana_version::version!())
+        .setting(AppSettings::InferSubcommands)
+        .setting(AppSettings::SubcommandRequiredElseHelp)
+        .setting(AppSettings::VersionlessSubcommands)
         .arg(
             Arg::with_name("ledger_path")
                 .short("l")
@@ -818,7 +821,8 @@ fn main() {
                 .value_name("DIR")
                 .takes_value(true)
                 .global(true)
-                .help("Use DIR for ledger location"),
+                .default_value("ledger")
+                .help("Use DIR as ledger location"),
         )
         .arg(
             Arg::with_name("wal_recovery_mode")
@@ -1019,7 +1023,7 @@ fn main() {
             .arg(&halt_at_slot_arg)
             .arg(&hard_forks_arg)
             .arg(&no_accounts_db_caching_arg)
-            .arg(&bpf_jit_arg)
+            .arg(&no_bpf_jit_arg)
             .arg(&allow_dead_slots_arg)
             .arg(&max_genesis_archive_unpacked_size_arg)
             .arg(
@@ -1235,13 +1239,6 @@ fn main() {
                            bugs are feature-gated behind this)"),
             )
             .arg(
-                Arg::with_name("enable_simple_capitalization")
-                    .required(false)
-                    .long("enable-simple-capitalization")
-                    .takes_value(false)
-                    .help("Enable simple capitalization to test hardcoded cap adjustments"),
-            )
-            .arg(
                 Arg::with_name("recalculate_capitalization")
                     .required(false)
                     .long("recalculate-capitalization")
@@ -1294,7 +1291,7 @@ fn main() {
                     .long("dead-slots-only")
                     .required(false)
                     .takes_value(false)
-                    .help("Limit puring to dead slots only")
+                    .help("Limit purging to dead slots only")
             )
         )
         .subcommand(
@@ -1355,7 +1352,11 @@ fn main() {
 
     // Canonicalize ledger path to avoid issues with symlink creation
     let ledger_path = fs::canonicalize(&ledger_path).unwrap_or_else(|err| {
-        eprintln!("Unable to access ledger path: {:?}", err);
+        eprintln!(
+            "Unable to access ledger path '{}': {}",
+            ledger_path.display(),
+            err
+        );
         exit(1);
     });
 
@@ -1684,7 +1685,7 @@ fn main() {
                 dev_halt_at_slot: value_t!(arg_matches, "halt_at_slot", Slot).ok(),
                 new_hard_forks: hardforks_of(arg_matches, "hard_forks"),
                 poh_verify: !arg_matches.is_present("skip_poh_verify"),
-                bpf_jit: arg_matches.is_present("bpf_jit"),
+                bpf_jit: !matches.is_present("no_bpf_jit"),
                 accounts_db_caching_enabled: !arg_matches.is_present("no_accounts_db_caching"),
                 allow_dead_slots: arg_matches.is_present("allow_dead_slots"),
                 ..ProcessOptions::default()
@@ -1876,7 +1877,7 @@ fn main() {
                     if let Some(faucet_pubkey) = faucet_pubkey {
                         bank.store_account(
                             &faucet_pubkey,
-                            &Account::new(faucet_lamports, 0, &system_program::id()),
+                            &AccountSharedData::new(faucet_lamports, 0, &system_program::id()),
                         );
                     }
 
@@ -1936,7 +1937,7 @@ fn main() {
 
                             bank.store_account(
                                 identity_pubkey,
-                                &Account::new(
+                                &AccountSharedData::new(
                                     bootstrap_validator_lamports,
                                     0,
                                     &system_program::id(),
@@ -2085,7 +2086,7 @@ fn main() {
 
                     println!("---");
                     for (pubkey, (account, slot)) in accounts.into_iter() {
-                        let data_len = account.data.len();
+                        let data_len = account.data().len();
                         println!("{}:", pubkey);
                         println!("  - balance: {} SOL", lamports_to_sol(account.lamports));
                         println!("  - owner: '{}'", account.owner);
@@ -2093,7 +2094,7 @@ fn main() {
                         println!("  - slot: {}", slot);
                         println!("  - rent_epoch: {}", account.rent_epoch);
                         if !exclude_account_data {
-                            println!("  - data: '{}'", bs58::encode(account.data).into_string());
+                            println!("  - data: '{}'", bs58::encode(account.data()).into_string());
                         }
                         println!("  - data_len: {}", data_len);
                     }
@@ -2186,30 +2187,6 @@ fn main() {
                             genesis_config.rent.minimum_balance(Feature::size_of()),
                             1,
                         );
-                        if arg_matches.is_present("enable_simple_capitalization") {
-                            if base_bank
-                                .get_account(&feature_set::simple_capitalization::id())
-                                .is_none()
-                            {
-                                base_bank.store_account(
-                                    &feature_set::simple_capitalization::id(),
-                                    &feature::create_account(
-                                        &Feature { activated_at: None },
-                                        feature_account_balance,
-                                    ),
-                                );
-                                let old_cap = base_bank.set_capitalization();
-                                let new_cap = base_bank.capitalization();
-                                warn!(
-                                    "Skewing capitalization a bit to enable simple capitalization as \
-                                    requested: increasing {} from {} to {}",
-                                    feature_account_balance, old_cap, new_cap,
-                                );
-                                assert_eq!(old_cap + feature_account_balance, new_cap);
-                            } else {
-                                warn!("Already simple_capitalization is activated (or scheduled)");
-                            }
-                        }
                         if arg_matches.is_present("enable_stake_program_v2") {
                             let mut force_enabled_count = 0;
                             if base_bank
@@ -2253,7 +2230,7 @@ fn main() {
                                     // capitalizaion, which doesn't affect inflation behavior!
                                     base_bank.store_account(
                                         &feature_set::secp256k1_program_enabled::id(),
-                                        &Account::default(),
+                                        &AccountSharedData::default(),
                                     );
                                     force_enabled_count -= 1;
                                 } else {
@@ -2270,7 +2247,7 @@ fn main() {
                                     // capitalizaion, which doesn't affect inflation behavior!
                                     base_bank.store_account(
                                         &feature_set::instructions_sysvar_enabled::id(),
-                                        &Account::default(),
+                                        &AccountSharedData::default(),
                                     );
                                     force_enabled_count -= 1;
                                 } else {
@@ -2567,7 +2544,7 @@ fn main() {
                                             owner: format!("{}", base_account.owner),
                                             old_balance: base_account.lamports,
                                             new_balance: warped_account.lamports,
-                                            data_size: base_account.data.len(),
+                                            data_size: base_account.data().len(),
                                             delegation: format_or_na(detail.map(|d| d.voter)),
                                             delegation_owner: format_or_na(
                                                 detail.map(|d| d.voter_owner),

@@ -2802,6 +2802,7 @@ mod tests {
             use_deprecated_loader: false,
             allow_excessive_balance: false,
         };
+        config.output_format = OutputFormat::JsonCompact;
         let result = process_command(&config);
         let json: Value = serde_json::from_str(&result.unwrap()).unwrap();
         let program_id = json

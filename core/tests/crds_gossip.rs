@@ -3,7 +3,7 @@ use bincode::serialized_size;
 use log::*;
 use rayon::prelude::*;
 use rayon::{ThreadPool, ThreadPoolBuilder};
-use serial_test_derive::serial;
+use serial_test::serial;
 use solana_core::cluster_info;
 use solana_core::contact_info::ContactInfo;
 use solana_core::crds_gossip::*;
@@ -302,7 +302,7 @@ fn network_run_push(
                 let mut node_lock = node.lock().unwrap();
                 let timeouts = node_lock.make_timeouts_test();
                 node_lock.purge(thread_pool, now, &timeouts);
-                node_lock.new_push_messages(vec![], now)
+                (node_lock.id, node_lock.new_push_messages(vec![], now))
             })
             .collect();
         let transfered: Vec<_> = requests

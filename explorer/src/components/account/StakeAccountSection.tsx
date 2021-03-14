@@ -1,7 +1,7 @@
 import React from "react";
 import { TableCardBody } from "components/common/TableCardBody";
 import { lamportsToSolString } from "utils";
-import { displayTimestamp } from "utils/date";
+import { displayTimestampUtc } from "utils/date";
 import { Account, useFetchAccountInfo } from "providers/accounts";
 import { Address } from "components/common/Address";
 import {
@@ -48,9 +48,9 @@ export function StakeAccountSection({
 }
 
 function LockupCard({ stakeAccount }: { stakeAccount: StakeAccountInfo }) {
-  const unixTimestamp = stakeAccount.meta?.lockup.unixTimestamp;
-  if (unixTimestamp && unixTimestamp > 0) {
-    const prettyTimestamp = displayTimestamp(unixTimestamp * 1000);
+  const unixTimestamp = 1000 * (stakeAccount.meta?.lockup.unixTimestamp || 0);
+  if (Date.now() < unixTimestamp) {
+    const prettyTimestamp = displayTimestampUtc(unixTimestamp);
     return (
       <div className="alert alert-warning text-center">
         <strong>Account is locked!</strong> Lockup expires on {prettyTimestamp}
