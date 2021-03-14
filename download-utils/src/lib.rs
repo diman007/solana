@@ -169,11 +169,11 @@ pub fn download_genesis_if_missing(
 
 pub fn download_snapshot(
     rpc_addr: &SocketAddr,
-    snapshot_output_dir: &Path,
+    ledger_path: &Path,
     desired_snapshot_hash: (Slot, Hash),
     use_progress_bar: bool,
 ) -> Result<(), String> {
-    snapshot_utils::purge_old_snapshot_archives(snapshot_output_dir);
+    snapshot_utils::purge_old_snapshot_archives(ledger_path);
 
     for compression in &[
         ArchiveFormat::TarZstd,
@@ -181,7 +181,7 @@ pub fn download_snapshot(
         ArchiveFormat::TarBzip2,
     ] {
         let desired_snapshot_package = snapshot_utils::get_snapshot_archive_path(
-            snapshot_output_dir.to_path_buf(),
+            ledger_path.to_path_buf(),
             &desired_snapshot_hash,
             *compression,
         );
